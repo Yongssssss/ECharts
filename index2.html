@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BOUNDS 동적 연동 ㄱ자 계단식 Zone 스캐터 차트</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+        }
+
+        #scatter-chart-container {
+            position: relative;
+            width: 100%;
+            height: 550px;
+            margin: 0px auto;
+            border: 2px solid red;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        #scatter-chart { 
+            width: 100%; 
+            height: 100%; 
+            margin: 0px auto;
+            border: 2px solid blue;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="scatter-chart-container">
+        <div id="scatter-chart"></div>
+    </div>
+
+    <script>
+        const container = document.getElementById('scatter-chart-container');
+        const chartDom = document.getElementById('scatter-chart');
+        const myChart = echarts.init(chartDom);
+        
+        /* 주식 샘플 데이터 10개 */
+        const stockData = [
+            ['24/01/10', '카카오카카오카카오카카오카카오카카오카카오카카오카카오카카오', 200000, 1.5],         // 1루존
+            ['24/01/15', '삼성전자', 450000, 8.1],       // 1루존
+            ['24/01/22', '신한지주', 3500000, 5.8],      // 2루존 (Y축 2루)
+            ['24/02/01', 'SK하이닉스', 800000, 15.5],    // 2루존 (X축 2루)
+            ['24/02/10', '삼성바이오', 4200000, 18.2],   // 2루존
+            ['24/02/18', 'NAVER', 8800000, 9.4],        // 3루존 (Y축 3루)
+            ['24/02/25', '포스코홀딩스', 9500000, 28.9],    // 3루존
+            ['24/03/02', 'LG에너지솔루션', 18000000, 12.0], // 홈런존 (Y축 홈런)
+            ['24/03/12', '현대차', 45000000, 12.1],        // 홈런존
+            ['24/03/20', '알테오젠', 210000000, 5.0],     // 홈런존
+            // 1. 홈런존: 3억 한계선 경계 테스트 (수익률 120%, 수익금액 2.8억),
+            ['24/03/25', '엔씨소프트', 280000000, 120.0],    
+            // 2. 홈런존: Y축 최대 한계값(3억) 초과 테스트 (수익률 80%, 수익금액 5억 -> 차트 상단 3억선에 고정)
+            ['24/03/28', '한화에어로', 500000000, 80.0],
+            // 3. 홈런존: X축 최대 한계값(150%) 초과 테스트 (수익률 250%, 수익금액 1.5억 -> 차트 우측 150%선에 고정)
+            ['24/04/02', '크래프톤', 150000000, 250.0],
+            // 4. 홈런존: 극단적 최대 한계값 테스트 (수익률 500%, 수익금액 12억 -> 우측 상단 모서리 끝단에 고정)
+            ['24/04/05', '삼성바이오', 1200000000, 500.0],
+            // 5. 홈런존: X/Y 축 모두 150%/3억 미만 적정 홈런 위치 (수익률 45%, 수익금액 8,000만)
+            ['24/04/10', 'SK하이닉스', 80000000, 45.0],
+            // 6. 홈런존: 높은 수익률 + 중상위 수익금액 (수익률 180%, 수익금액 2.2억)
+            ['24/04/12', '알테오젠', 220000000, 20.0],
+            // 7. 홈런존: 적정 수익률 + 초고액 수익금액 (수익률 35%, 수익금액 8.5억)
+            ['24/04/15', '삼성전자', 850000000, 35.0],
+            // 8. 홈런존: 초고수익률 중소형주 (수익률 420%, 수익금액 4,500만)
+            ['24/04/18', '레인보우로보틱스', 45000000, 420.0],
+            // 9. 홈런존: Y축 딱 3억 경계점 테스트 (수익률 95%, 수익금액 3억)
+            ['24/04/22', '현대차', 300000000, 95.0],
+            // 10. 홈런존: 초고액 10억 테스트 (수익률 160%, 수익금액 10억)
+            ['24/04/25', '포스코홀딩스', 1000000000, 10.0]
+        ];
+
+        /* 
+          [비율 기반 좌표 정의]
+          BOUNDS 배열 변경 시 데이터 좌표 변환, 축 라벨, graphic 배경 크기가 자동으로 연동
+        */
+        const BOUNDS = [0, 40, 65, 85, 100];
+
+        // x축 y축 최대값 판단
+        let max_x = 40;
+        let max_y = 15000000;
+
+        stockData.forEach(item => {
+            const amtVal = parseFloat(item[2]);
+            const rateVal = parseFloat(item[3]);
+            if (max_x < rateVal) {
+                max_x = rateVal;
+            }
+
+            if (max_y < amtVal) {
+                max_y = amtVal;
+            }
+        });
+
+        function transformCoord(profit, rate) {
+            // Y축 (수익금액) 매핑
+            let y;
+            if (profit <= 1000000) {
+                y = BOUNDS[0] + (profit / 1000000) * (BOUNDS[1] - BOUNDS[0]);
+            } else if (profit <= 5000000) {
+                y = BOUNDS[1] + ((profit - 1000000) / 4000000) * (BOUNDS[2] - BOUNDS[1]);
+            } else if (profit <= 10000000) {
+                y = BOUNDS[2] + ((profit - 5000000) / 5000000) * (BOUNDS[3] - BOUNDS[2]);
+            } else {
+                const logMin = Math.log10(10000000);
+                const logMax = Math.log10(max_y);
+                const logVal = Math.log10(Math.min(max_y, Math.max(10000000, profit)));
+                y = BOUNDS[3] + ((logVal - logMin) / (logMax - logMin)) * (BOUNDS[4] - BOUNDS[3]);
+            }
+
+            // X축 (수익률) 매핑
+            let x;
+            if (rate <= 10) {
+                x = BOUNDS[0] + (rate / 10) * (BOUNDS[1] - BOUNDS[0]);
+            } else if (rate <= 20) {
+                x = BOUNDS[1] + ((rate - 10) / 10) * (BOUNDS[2] - BOUNDS[1]);
+            } else if (rate <= 30) {
+                x = BOUNDS[2] + ((rate - 20) / 10) * (BOUNDS[3] - BOUNDS[2]);
+            } else {
+                x = BOUNDS[3] + (Math.min(max_x, rate - 30) / (max_x)) * (BOUNDS[4] - BOUNDS[3]);
+            }
+
+            return [x, y];
+        }
+
+        const mappedSeriesData = stockData.map(item => ({
+            value: transformCoord(item[2], item[3]),
+            rawData: item
+        }));
+
+        function updateSquareChart() {
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            const padding = 30;
+
+            const availableSize = Math.min(containerWidth - padding * 2, containerHeight - padding * 2);
+            const gridLeft = (containerWidth - availableSize) / 2 + (padding - 5);
+            const gridTop = (containerHeight - availableSize) / 2;
+
+            /* BOUNDS 값(0~100)을 0.0 ~ 1.0 비율로 변환 */
+            const r1 = BOUNDS[1] / 100;
+            const r2 = BOUNDS[2] / 100;
+            const r3 = BOUNDS[3] / 100;
+            const r4 = BOUNDS[4] / 100;
+
+            /* 존 색상 정의 */
+            const zoneColors = {
+                homerun: '#FF667B',
+                third: '#FF8A9A',
+                second: '#FFADB9',
+                first: '#FFCCD3',
+            };
+
+            /* Zone 데이터 정의 (이름, 비율, 색상, zIndex) */
+            const zones = [
+                { name: '홈런존', ratio: r4, color: zoneColors.homerun, z: 1, rounded: 16 },
+                { name: '3루존', ratio: r3, color: zoneColors.third, z: 2, rounded: [0, 16, 0, 16] },
+                { name: '2루존', ratio: r2, color: zoneColors.second, z: 3, rounded: [0, 16, 0, 16] },
+                { name: '1루존', ratio: r1, color: zoneColors.first, z: 4, rounded: [0, 16, 0, 16] }
+            ];
+
+            const SYMBOL_MARGIN = 0;
+            let symbolRotate = 0;
+
+            const graphicElements = [];
+
+            /* BOUNDS 동적 비율을 활용한 graphic 요소 자동 생성 */
+            zones.forEach(zone => {
+                const zoneWidth = availableSize * zone.ratio;
+                const zoneHeight = availableSize * zone.ratio;
+                const zoneLeft = gridLeft;
+                const zoneTop = gridTop + availableSize * (1 - zone.ratio);
+
+                // 1. Zone 배경 사각형
+                graphicElements.push({
+                    type: 'rect',
+                    shape: {
+                        x: 0,
+                        y: 0,
+                        width: zoneWidth + (zone.name === '홈런존' ? SYMBOL_MARGIN : 0),
+                        height: zoneHeight + (zone.name === '홈런존' ? SYMBOL_MARGIN : 0),
+                        r: zone.rounded
+                    },
+                    style: { fill: zone.color },
+                    left: zoneLeft,
+                    top: zoneTop - (zone.name === '홈런존' ? SYMBOL_MARGIN : 0),
+                    z: zone.z
+                });
+
+                // 2. 우측 상단 모서리 안쪽 텍스트 라벨
+                graphicElements.push({
+                    type: 'text',
+                    // 우측 상단 모서리에서 안쪽으로 여백(16px) 부여
+                    x: zoneLeft + zoneWidth - 10,
+                    y: zoneTop + 10,
+                    style: {
+                        text: zone.name,
+                        fill: '#FFFFFF',
+                        fontSize: 12,
+                        fontWeight: 'bold',
+                        textAlign: 'right',        // 우측 기준 정렬
+                        textVerticalAlign: 'top'  // 상단 기준 정렬
+                    },
+                    z: zone.z + 5 // 사각형 배경보다 위에 표시
+                });
+            });
+            
+            myChart.setOption({
+                grid: {
+                    left: gridLeft,
+                    top: gridTop,
+                    width: availableSize,
+                    height: availableSize,
+                    show: false,
+                },
+                tooltip: {
+                    trigger: 'item',
+                    //triggerOn: 'click',
+                    backgroundColor: 'rgba(255, 255, 255, 0.80)',
+                    borderColor: 'transparent',
+                    borderWidth: 0,
+                    padding: [4, 4],
+                    extraCssText: 'box-shadow: 0 4px 12px rgba(100, 0, 0, 0.25); border-radius: 8px;',
+                    formatter: function (params) {
+                        const raw = params.data.rawData;
+                        // 날짜 포맷 변환 (예: 24/01/10 -> 24/01/10 또는 YY/MM/DD)
+                        const dateStr = raw[0];
+                        const stockName = raw[1];
+                        const profit = raw[2].toLocaleString(); // 580,486
+                        const rate = raw[3] > 0 ? `+${raw[3]}%` : `${raw[3]}%`; // +33.32%
+
+                        return `
+                            <div style="font-family: sans-serif; min-width: 80px; margin: 0px 4px 0px 4px;"" >
+                                <div style="font-size: 10px !important; color: #8e8e93; font-weight: 500; line-height: 1; margin-bottom: 8px;">${dateStr}</div>
+                                <div style="font-size: 12px; color: #1c1c1e; font-weight: bold; line-height: 1; margin-bottom: 2px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; ">${stockName}</div>
+                                <div style="font-size: 12px; color: #d32f2f; font-weight: bold; ">
+                                    ${profit}원(${rate})
+                                </div>
+                            </div>
+                        `;
+                    }
+                },
+                xAxis: {
+                    name: '수익률',
+                    nameLocation: 'end',
+                    nameGap: SYMBOL_MARGIN,
+                    nameTextStyle: {
+                        color: '#444',
+                        fontSize: 12,
+                        fontWeight: 'bold',
+                        align: 'right',
+                        verticalAlign: 'top',
+                        padding: [4, 0, 0, 0],
+                    },
+                    type: 'value',
+                    min: 0,
+                    max: 100,
+                    interval: 5,
+                    splitLine: { show: false },
+                    axisTick: { show: false },
+                    axisLine: { show: false },
+                    axisLabel: {
+                        margin: 4,
+                        color: '#555',
+                        fontSize: 11,
+                        fontWeight: '600',
+                        formatter: function (val) {
+                            if (val === 0) return '0';
+                            if (val === BOUNDS[1]) return '10%';
+                            if (val === BOUNDS[2]) return '20%';
+                            if (val === BOUNDS[3]) return '30%';
+                            return '';
+                        }
+                    }
+                },
+                yAxis: {
+                    name: '수익금액', 
+                    nameLocation: 'end',
+                    nameGap: SYMBOL_MARGIN,
+                    nameTextStyle: {
+                        color: '#444',
+                        fontSize: 12,
+                        fontWeight: 'bold',
+                        align: 'right',
+                        verticalAlign: 'top',
+                        padding: [0, 4, 0, 0],
+                    },
+                    type: 'value',
+                    min: 0,
+                    max: 100,
+                    interval: 5,
+                    splitLine: { show: false },
+                    axisTick: { show: false },
+                    axisLine: { show: false },
+                    axisLabel: {
+                        margin: 4,
+                        color: '#555',
+                        fontSize: 11,
+                        fontWeight: '600',
+                        align: 'right',
+                        formatter: function (val) {
+                            if (val === BOUNDS[1]) return '100만';
+                            if (val === BOUNDS[2]) return '500만';
+                            if (val === BOUNDS[3]) return '1,000만';
+                            return '';
+                        }
+                    }
+                },
+                graphic: {
+                    elements: graphicElements
+                },
+                series: [{
+                    type: 'scatter',
+                    symbolSize: 12,
+                    symbolRotate: symbolRotate,
+                    symbolRotate: function() {
+                        symbolRotate += 10;
+                        return symbolRotate;
+                    },
+                    symbol: 'image://./assets/img_kob_graph_ball.png',
+
+                    data: mappedSeriesData,
+                    itemStyle: { opacity: 1 },
+                    // itemStyle: { 
+                    //     color: '#fff',
+                    //     borderColor: '#ff0000',
+                    //     borderWidth: 2,
+                    //     shadowBlur: 4,
+                    //     shadowColor: '#fff', //'rgba(0, 0, 0, 0.25)'
+                    // },
+                    emphasis: {
+                        scale: 1,
+                        // itemStyle: {
+                        //     opacity: 0,
+                        //     color: '#fff',
+                        //     borderColor: '#fff000',
+                        //     borderWidth: 20,
+                        //     shadowBlur: 12,
+                        //     shadowColor: '#ffdf00',
+                        //     shadowOffsetX: 2,
+                        //     shadowOffsetY: 2,
+                        // },
+                        itemStyle: {
+                            opacity: 0
+                        },
+                        label: {
+                            show: true,
+                            formatter: '',
+                            width: 16,
+                            height: 16,
+                            // backgroundColor: '#f000ff',
+                            backgroundColor: {
+                                image: './assets/img_kob_graph_ball_on.png',
+                            },
+                            position: 'inside',
+                        }
+                    },
+                    z: 10
+                }]
+            });
+            
+            myChart.resize();
+        }
+
+        updateSquareChart();
+        window.addEventListener('resize', updateSquareChart);
+    </script>
+</body>
+</html>
